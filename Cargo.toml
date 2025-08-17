@@ -1,0 +1,10 @@
+[package]
+name = "monitor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+openssh = "0.11.5"
+tokio = { version = "1.47.1", features = ["full"] }
+ratatui = { version = "0.29.0", features = ["all-widgets"] }
+color-eyre = "0.6.5"
