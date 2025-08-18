@@ -7,87 +7,61 @@ use ratatui::{
     widgets::{Block, Gauge, Sparkline, Widget},
 };
 
+use crate::session_manager::SessionManager;
+
 #[derive(Debug, Clone)]
 pub struct RemoteStats {
-    cpu_percent: f32,
+    cpu_percent: u64,
     cpu_history: Vec<u64>,
-    mem_percent: f32,
+    mem_percent: u64,
     mem_history: Vec<u64>,
-    disk_usage_percent: f32,
+    disk_usage_percent: u64,
     ssh_conn: String,
 }
 
 impl RemoteStats {
-    pub fn make(ssh_conn: String) -> Self {
+    pub async fn make(ssh_conn: String, session_manager: &mut SessionManager) -> Self {
+        session_manager.new_connection(ssh_conn.clone()).await;
+
         Self {
-            cpu_percent: 0.0,
+            cpu_percent: 0,
             cpu_history: Vec::new(),
-            mem_percent: 0.0,
+            mem_percent: 0,
             mem_history: Vec::new(),
-            disk_usage_percent: 0.0,
+            disk_usage_percent: 0,
             ssh_conn,
         }
     }
 
-    pub async fn refresh(&mut self) -> Result<(), Error> {
-        let session = Session::connect(&self.ssh_conn, openssh::KnownHosts::Strict)
-            .await
-            .expect("Failed connection");
+    pub async fn refresh(&mut self, session_manager: &mut SessionManager) -> Result<(), Error> {
+        let cpu_command = String::from("top -b -n 10 -d.2 | grep 'Cpu' |  awk 'NR==3{ print($2)}'");
 
-        let cpu_result = session
-            .raw_command("top -b -n 10 -d.2 | grep 'Cpu' |  awk 'NR==3{ print($2)}'")
-            .output()
+        if let Ok(cpu_num) = session_manager
+            .run_command(self.ssh_conn.clone(), cpu_command)
             .await
-            .expect("Failed to get cpu");
-
-        if let Ok(cpu_num) = String::from_utf8(cpu_result.stdout) {
-            self.cpu_percent = cpu_num
-                .strip_suffix("\r\n")
-                .or(cpu_num.strip_suffix("\n"))
-                .unwrap_or(cpu_num.as_str())
-                .to_string()
-                .trim()
-                .parse()
-                .unwrap_or(0.0);
-            self.cpu_history.push(self.cpu_percent as u64);
+        {
+            self.cpu_percent = cpu_num;
+            self.cpu_history.push(self.cpu_percent);
         }
 
-        let mem_result = session
-            .raw_command("free | grep Mem | awk '{print $3/$2 * 100.0}'")
-            .output()
-            .await
-            .expect("Failed to get memory");
+        let mem_command = String::from("free | grep Mem | awk '{print $3/$2 * 100.0}'");
 
-        if let Ok(mem_num) = String::from_utf8(mem_result.stdout) {
-            self.mem_percent = mem_num
-                .strip_suffix("\r\n")
-                .or(mem_num.strip_suffix("\n"))
-                .unwrap_or(mem_num.as_str())
-                .to_string()
-                .trim()
-                .parse()
-                .unwrap_or(0.0);
-            self.mem_history.push(self.mem_percent as u64);
+        if let Ok(mem_num) = session_manager
+            .run_command(self.ssh_conn.clone(), mem_command)
+            .await
+        {
+            self.mem_percent = mem_num;
+            self.mem_history.push(self.mem_percent);
         }
 
-        let storage_result = session
-            .raw_command("df / | awk 'END{print $5}' | sed 's/%//g'")
-            .output()
+        let storage_command = String::from("df / | awk 'END{print $5}' | sed 's/%//g'");
+
+        if let Ok(storage_num) = session_manager
+            .run_command(self.ssh_conn.clone(), storage_command)
             .await
-            .expect("Failed to get storage");
-
-        if let Ok(storage_num) = String::from_utf8(storage_result.stdout) {
-            self.disk_usage_percent = storage_num
-                .strip_suffix("\r\n")
-                .or(storage_num.strip_suffix("\n"))
-                .unwrap_or(storage_num.as_str())
-                .to_string()
-                .trim()
-                .parse()
-                .unwrap_or(0.0);
+        {
+            self.disk_usage_percent = storage_num;
         }
-
-        session.close().await?;
 
         Ok(())
     }
@@ -168,18 +142,5 @@ impl Widget for RemoteStats {
             .percent(self.disk_usage_percent as u16)
             .block(hdd_block)
             .render(layout[2], buf);
-
-        // let data = vec![(10.0, 10.0), (20.0, 20.0), (30.0, 30.0)];
-
-        // let _ = Chart::new(vec![
-        //    Dataset::default()
-        //        .data(&data)
-        //        .marker(ratatui::symbols::Marker::HalfBlock)
-        //        .style(Style::new().fg(ratatui::style::Color::Blue))
-        //        .graph_type(ratatui::widgets::GraphType::Bar),
-        //])
-        //.block(block)
-        // .x_axis(Axis::default().style(Style::default()).bounds([0.0, 50.0]))
-        //.y_axis(Axis::default().style(Style::default()).bounds([0.0, 50.0]));
     }
 }
